@@ -1,0 +1,125 @@
+from pathlib import Path
+
+# backend/config/settings.py
+
+# -------------------------------------------------------------------
+# Paths
+# -------------------------------------------------------------------
+BASE_DIR = Path(__file__).resolve().parent.parent      # .../02_src/backend
+EOI_ROOT = BASE_DIR.parent.parent                     # .../EOI-System
+
+# -------------------------------------------------------------------
+# Excel sources (ΔΕΝ ΑΛΛΑΖΟΥΝ)
+# -------------------------------------------------------------------
+EXCEL_SOURCES_DIR = EOI_ROOT / "01_docs" / "03_excel_sources"
+ATHLETES_XLSX_PATH = EXCEL_SOURCES_DIR / "athletes.xlsx"
+HORSES_XLSX_PATH = EXCEL_SOURCES_DIR / "horses.xlsx"
+
+# -------------------------------------------------------------------
+# Medical certificate template (ΔΕΝ ΜΕΤΑΚΙΝΕΙΤΑΙ – ΔΕΝ ΞΑΝΑΠΕΙΡΑΖΕΤΑΙ)
+# -------------------------------------------------------------------
+MEDICAL_CERT_TEMPLATE_PATH = (
+    EOI_ROOT / "01_docs" / "02_forms_official" / "Ιατρική_Βεβαίωση_ΕΟΙ.docx"
+)
+
+# -------------------------------------------------------------------
+# Security / Debug
+# -------------------------------------------------------------------
+SECRET_KEY = "dev-secret-key-change-me"
+DEBUG = True
+ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
+
+# -------------------------------------------------------------------
+# Applications
+# -------------------------------------------------------------------
+INSTALLED_APPS = [
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+
+    # local apps
+    "accounts",
+    "organizations",
+    "registry",
+]
+
+# -------------------------------------------------------------------
+# Middleware
+# -------------------------------------------------------------------
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+]
+
+# -------------------------------------------------------------------
+# URLs / Templates
+# -------------------------------------------------------------------
+ROOT_URLCONF = "config.urls"
+
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [BASE_DIR / "templates"],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.debug",
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
+            ],
+        },
+    },
+]
+
+WSGI_APPLICATION = "config.wsgi.application"
+
+# -------------------------------------------------------------------
+# Database
+# -------------------------------------------------------------------
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": BASE_DIR / "db.sqlite3",
+    }
+}
+
+# -------------------------------------------------------------------
+# Password validation
+# -------------------------------------------------------------------
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+
+# -------------------------------------------------------------------
+# Locale
+# -------------------------------------------------------------------
+LANGUAGE_CODE = "el"
+TIME_ZONE = "Europe/Athens"
+USE_I18N = True
+USE_TZ = True
+
+# -------------------------------------------------------------------
+# Static / Media (ΑΠΑΡΑΙΤΗΤΟ για server)
+# -------------------------------------------------------------------
+STATIC_URL = "/static/"
+
+MEDIA_URL = "/media/"
+MEDIA_ROOT = EOI_ROOT / "media"
+
+# -------------------------------------------------------------------
+# Default PK / Custom User
+# -------------------------------------------------------------------
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+AUTH_USER_MODEL = "accounts.User"

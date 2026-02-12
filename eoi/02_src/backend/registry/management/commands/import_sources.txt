@@ -1,0 +1,220 @@
+from __future__ import annotations
+
+from datetime import datetime, date
+from typing import Any, Dict, Optional
+
+from django.conf import settings
+from django.core.management.base import BaseCommand
+from django.db import transaction
+
+try:
+    import openpyxl
+except ImportError:
+    openpyxl = None
+
+from organizations.models import Region, Club
+from registry.models import Athlete, Horse
+
+
+def _norm(s: Any) -> str:
+    if s is None:
+        return ""
+    return str(s).strip().replace("\n", " ").replace("\t", " ")
+
+
+def _parse_date(v: Any) -> Optional[date]:
+    if v is None or v == "":
+        return None
+    if isinstance(v, date) and not isinstance(v, datetime):
+        return v
+    if isinstance(v, datetime):
+        return v.date()
+    if hasattr(v, "date"):
+        try:
+            return v.date()
+        except Exception:
+            pass
+    s = _norm(v)
+    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d/%m/%y"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _find_header_row(ws, wanted: set[str], max_rows: int = 30) -> Optional[int]:
+    wanted_n = {w.upper() for w in wanted}
+    for r in range(1, max_rows + 1):
+        values = [_norm(c.value).upper() for c in ws[r]]
+        hit = sum(1 for v in values if v in wanted_n)
+        if hit >= 2:  # αρκετό για να θεωρήσουμε header
+            return r
+    return None
+
+
+def _build_colmap(ws, header_row: int) -> Dict[str, int]:
+    colmap: Dict[str, int] = {}
+    for idx, cell in enumerate(ws[header_row], start=1):
+        key = _norm(cell.value).upper()
+        if key:
+            colmap[key] = idx
+    return colmap
+
+
+def _cell(ws, row: int, col: int) -> Any:
+    return ws.cell(row=row, column=col).value
+
+
+class Command(BaseCommand):
+    help = "Import athletes.xlsx + horses.xlsx into DB (upsert). Uses settings.ATHLETES_XLSX_PATH / HORSES_XLSX_PATH."
+
+    def add_arguments(self, parser):
+        parser.add_argument("--quiet", action="store_true")
+
+    @transaction.atomic
+    def handle(self, *args, **opts):
+        if openpyxl is None:
+            self.stderr.write("Missing dependency: openpyxl. Install: py -m pip install openpyxl")
+            return
+
+        quiet = bool(opts.get("quiet"))
+
+        athletes_path = getattr(settings, "ATHLETES_XLSX_PATH", None)
+        horses_path = getattr(settings, "HORSES_XLSX_PATH", None)
+
+        if not athletes_path or not horses_path:
+            self.stderr.write("ATHLETES_XLSX_PATH / HORSES_XLSX_PATH not set in settings.py")
+            return
+
+        # ensure default Region for placeholders
+        unknown_region, _ = Region.objects.get_or_create(name="ΑΓΝΩΣΤΗ")
+
+        # ---------------- ATHLETES ----------------
+        if not athletes_path.exists():
+            self.stderr.write(f"athletes.xlsx not found: {athletes_path}")
+        else:
+            wb = openpyxl.load_workbook(str(athletes_path), data_only=True)
+            ws = wb.active
+
+            wanted_headers = {
+                # Greek
+                "ΑΜ", "ΕΠΩΝΥΜΟ", "ΟΝΟΜΑ", "ΠΑΤΡΩΝΥΜΟ", "ΗΜΕΡ/ΝΙΑ ΓΕΝΝΗΣΕΩΣ", "ΗΜΕΡ/ΝΙΑ ΕΓΓΡΑΦΗΣ", "ΥΠΗΚΟΟΤΗΤΑ", "ΟΜΙΛΟΣ",
+                # English fallbacks
+                "REGISTRY_NUMBER", "LAST_NAME", "FIRST_NAME", "FATHER_NAME", "BIRTH_DATE", "REGISTRATION_DATE", "NATIONALITY", "CLUB",
+            }
+
+            header_row = _find_header_row(ws, wanted_headers)
+            if header_row is None:
+                raise RuntimeError("Δεν βρήκα γραμμή επικεφαλίδων στο athletes.xlsx")
+
+            col = _build_colmap(ws, header_row)
+
+            def pick(*names: str) -> Optional[int]:
+                for n in names:
+                    i = col.get(n.upper())
+                    if i:
+                        return i
+                return None
+
+            c_am = pick("ΑΜ", "REGISTRY_NUMBER")
+            c_last = pick("ΕΠΩΝΥΜΟ", "LAST_NAME")
+            c_first = pick("ΟΝΟΜΑ", "FIRST_NAME")
+            c_father = pick("ΠΑΤΡΩΝΥΜΟ", "FATHER_NAME")
+            c_birth = pick("ΗΜΕΡ/ΝΙΑ ΓΕΝΝΗΣΕΩΣ", "BIRTH_DATE")
+            c_reg = pick("ΗΜΕΡ/ΝΙΑ ΕΓΓΡΑΦΗΣ", "REGISTRATION_DATE")
+            c_nat = pick("ΥΠΗΚΟΟΤΗΤΑ", "NATIONALITY")
+            c_club = pick("ΟΜΙΛΟΣ", "CLUB")
+
+            if not (c_am and c_last and c_first and c_birth and c_club):
+                raise RuntimeError("athletes.xlsx: λείπουν βασικές στήλες (ΑΜ/ΕΠΩΝΥΜΟ/ΟΝΟΜΑ/ΗΜΕΡ ΓΕΝΝΗΣΗΣ/ΟΜΙΛΟΣ)")
+
+            count = 0
+            for r in range(header_row + 1, ws.max_row + 1):
+                am = _norm(_cell(ws, r, c_am))
+                last = _norm(_cell(ws, r, c_last))
+                first = _norm(_cell(ws, r, c_first))
+                if not am and not last and not first:
+                    continue
+
+                club_code = _norm(_cell(ws, r, c_club))
+                club = (
+                    Club.objects.filter(code__iexact=club_code).first()
+                    or Club.objects.filter(name__iexact=club_code).first()
+                )
+                if club is None:
+                    club = Club.objects.create(code=club_code or "UNKNOWN", name=club_code or "UNKNOWN", region=unknown_region)
+
+                defaults = {
+                    "last_name": last,
+                    "first_name": first,
+                    "father_name": _norm(_cell(ws, r, c_father)) if c_father else "",
+                    "birth_date": _parse_date(_cell(ws, r, c_birth)) or date(1900, 1, 1),
+                    "registration_date": _parse_date(_cell(ws, r, c_reg)) if c_reg else None,
+                    "nationality": _norm(_cell(ws, r, c_nat)) if c_nat else "",
+                    "club": club,
+                    "is_active": True,
+                }
+
+                Athlete.objects.update_or_create(registry_number=am, defaults=defaults)
+                count += 1
+
+            if not quiet:
+                self.stdout.write(f"Imported/updated athletes: {count}")
+
+        # ---------------- HORSES ----------------
+        if not horses_path.exists():
+            self.stderr.write(f"horses.xlsx not found: {horses_path}")
+        else:
+            wb = openpyxl.load_workbook(str(horses_path), data_only=True)
+            ws = wb.active
+
+            wanted_headers = {
+                # Greek
+                "ΑΜ", "ΙΠΠΟΣ", "ΔΙΑΒΑΤΗΡΙΟ", "ΗΜΕΡ/ΝΙΑ ΓΕΝΝΗΣΕΩΣ",
+                # English
+                "REGISTRY_NUMBER", "NAME", "PASSPORT_NUMBER", "BIRTH_DATE",
+            }
+
+            header_row = _find_header_row(ws, wanted_headers)
+            if header_row is None:
+                raise RuntimeError("Δεν βρήκα γραμμή επικεφαλίδων στο horses.xlsx")
+
+            col = _build_colmap(ws, header_row)
+
+            def pick(*names: str) -> Optional[int]:
+                for n in names:
+                    i = col.get(n.upper())
+                    if i:
+                        return i
+                return None
+
+            c_am = pick("ΑΜ", "AM", "REGISTRY_NUMBER")
+            c_name = pick("ΙΠΠΟΣ", "NAME")
+            c_pass = pick("ΔΙΑΒΑΤΗΡΙΟ", "PASSPORT_NUMBER")
+            c_birth = pick("ΗΜΕΡ/ΝΙΑ ΓΕΝΝΗΣΕΩΣ", "BIRTH_DATE")
+
+            if not (c_am and c_name):
+                raise RuntimeError("horses.xlsx: λείπουν βασικές στήλες (ΑΜ/ΙΠΠΟΣ)")
+
+            count = 0
+            for r in range(header_row + 1, ws.max_row + 1):
+                am = _norm(_cell(ws, r, c_am))
+                name = _norm(_cell(ws, r, c_name))
+                if not am and not name:
+                    continue
+
+                defaults = {
+                    "name": name,
+                    "passport_number": _norm(_cell(ws, r, c_pass)) if c_pass else "",
+                    "birth_date": _parse_date(_cell(ws, r, c_birth)) if c_birth else None,
+                    "is_active": True,
+                }
+                Horse.objects.update_or_create(registry_number=am, defaults=defaults)
+                count += 1
+
+            if not quiet:
+                self.stdout.write(f"Imported/updated horses: {count}")
+
+        if not quiet:
+            self.stdout.write("OK")
