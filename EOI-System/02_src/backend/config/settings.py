@@ -33,18 +33,18 @@ ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 # Applications
 # -------------------------------------------------------------------
 INSTALLED_APPS = [
-    "django.contrib.admin",
-    "django.contrib.auth",
-    "django.contrib.contenttypes",
-    "django.contrib.sessions",
-    "django.contrib.messages",
-    "django.contrib.staticfiles",
+    'django.contrib.admin',
+    'django.contrib.auth',
+    'django.contrib.contenttypes',
+    'django.contrib.sessions',
+    'django.contrib.messages',
+    'django.contrib.staticfiles',
     
-    # Τα δικά σου local apps (χωρίς django.contrib. μπροστά!)
-    "accounts",
-    "organizations",
-    "registry",
-    "competitions",
+    # Τα δικά σου apps – χωρίς django.contrib. μπροστά!
+    'accounts',
+    'organizations',
+    'registry',
+    'competitions',  # ← αυτό είναι το κλειδί – μόνο competitions
 ]
 
 # -------------------------------------------------------------------
